@@ -1,12 +1,10 @@
 using Microsoft.AspNetCore.Mvc;
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Supabase;
 using Postgrest.Attributes;
 using Postgrest.Models;
-using Telegram.Bot;
 
 namespace SponsorSaaS.Api.Controllers
 {
@@ -35,13 +33,12 @@ namespace SponsorSaaS.Api.Controllers
         public string NewStatus { get; set; }
     }
 
-    // ٣. مۆدێلی پڕۆفایل
+    // ٣. مۆدێلی پڕۆفایل (بەبێ تێلیگرام)
     [Table("profiles")]
     public class ProfileModel : BaseModel
     {
         [PrimaryKey("id", false)] public string Id { get; set; }
         [Column("balance")] public decimal Balance { get; set; }
-        [Column("telegram_chat_id")] public string TelegramChatId { get; set; }
     }
 
     // ٤. مۆدێلی ئۆردەر
@@ -68,8 +65,6 @@ namespace SponsorSaaS.Api.Controllers
     public class SponsorController : ControllerBase
     {
         private readonly Supabase.Client _supabase;
-        // لێرەدا تۆکنە ڕاستەقینەکەی خۆت دابنێ
-        private readonly string _botToken = "8442452637:AAEZsajoeyN11wGipFnWqGZmm6XreIYqdRk"; 
 
         public SponsorController(Supabase.Client supabase)
         {
@@ -116,8 +111,6 @@ namespace SponsorSaaS.Api.Controllers
         {
             try
             {
-                var bot = new TelegramBotClient(_botToken);
-
                 // بڕینی پارە
                 var profResp = await _supabase.From<ProfileModel>().Where(x => x.Id == request.UserId).Get();
                 var profile = profResp.Models.FirstOrDefault();
@@ -136,56 +129,9 @@ namespace SponsorSaaS.Api.Controllers
                 order.Status = request.NewStatus;
                 await _supabase.From<OrderModel>().Update(order);
 
-                // ناردنی تێلیگرام
-                if (!string.IsNullOrEmpty(profile.TelegramChatId))
-                {
-                    string statusEmoji = request.NewStatus == "done" ? "✅" : "📈";
-                    string msg = $"{statusEmoji} *نوێکردنەوەی سپۆنسەر*\n\n" +
-                                 $"📌 ڕیکلام: {order.AdName}\n" +
-                                 $"💰 خەرجکرا: ${request.DeductionAmount}\n" +
-                                 $"👀 ڤییو: {request.NewViews}\n" +
-                                 $"💵 باڵانسی ماوە: ${profile.Balance}";
-
-                    await bot.SendMessage(long.Parse(profile.TelegramChatId), msg, parseMode: Telegram.Bot.Types.Enums.ParseMode.Markdown);
-                }
-
-                return Ok(new { message = "داتاکان نوێکرانەوە و تێلیگرام نێردرا ✅" });
+                return Ok(new { message = "داتاکان بە سەرکەوتوویی نوێکرانەوە ✅" });
             }
             catch (Exception ex) { return StatusCode(500, new { message = ex.Message }); }
-        }
-
-        // ئەم میتۆدە بۆ پەیوەستکردنی بەکارهێنەرە بە بۆتەکە
-        [HttpPost("telegram-webhook")]
-        public async Task<IActionResult> TelegramWebhook([FromBody] dynamic update)
-        {
-            try
-            {
-                var bot = new TelegramBotClient(_botToken);
-                var message = update.message;
-                if (message == null) return Ok();
-
-                string chatId = message.chat.id.ToString();
-                string text = message.text?.ToString() ?? "";
-
-                if (text.StartsWith("/start"))
-                {
-                    var parts = text.Split(' ');
-                    if (parts.Length > 1)
-                    {
-                        string userId = parts[1];
-                        var response = await _supabase.From<ProfileModel>().Where(x => x.Id == userId).Get();
-                        var profile = response.Models.FirstOrDefault();
-                        if (profile != null)
-                        {
-                            profile.TelegramChatId = chatId;
-                            await _supabase.From<ProfileModel>().Update(profile);
-                            await bot.SendMessage(long.Parse(chatId), "پیرۆزە! 🎉 هەژمارەکەت پەیوەست کرا.");
-                        }
-                    }
-                }
-            }
-            catch { /* تەنها بۆ ئەوەی پڕۆژەکە نەوەستێت */ }
-            return Ok();
         }
     }
 }
