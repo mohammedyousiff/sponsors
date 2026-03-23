@@ -33,7 +33,7 @@ namespace SponsorSaaS.Api.Controllers
         public string NewStatus { get; set; }
     }
 
-    // ٣. مۆدێلی پڕۆفایل (بەبێ تێلیگرام)
+    // ٣. مۆدێلی پڕۆفایل
     [Table("profiles")]
     public class ProfileModel : BaseModel
     {
@@ -58,6 +58,16 @@ namespace SponsorSaaS.Api.Controllers
         [Column("duration_days")] public int DurationDays { get; set; }
         [Column("tiktok_video_url")] public string TiktokUrl { get; set; }
         [Column("tiktok_post_code")] public string PostCode { get; set; }
+    }
+
+    // ٥. مۆدێلی ئاگادارکردنەوەکان (نوێ)
+    [Table("notifications")]
+    public class NotificationModel : BaseModel
+    {
+        [Column("user_id")] public string UserId { get; set; }
+        [Column("title")] public string Title { get; set; }
+        [Column("message")] public string Message { get; set; }
+        [Column("is_read")] public bool IsRead { get; set; }
     }
 
     [ApiController]
@@ -128,6 +138,24 @@ namespace SponsorSaaS.Api.Controllers
                 order.Views += request.NewViews;
                 order.Status = request.NewStatus;
                 await _supabase.From<OrderModel>().Update(order);
+
+                // دروستکردنی ئاگادارکردنەوە بۆ بەکارهێنەر (نوێ)
+                string notifTitle = "ڕیکلامەکەت نوێکرایەوە 🚀";
+                if (request.NewStatus == "done") notifTitle = "سپۆنسەرەکەت تەواو بوو ✅";
+                else if (request.NewStatus == "rejected") notifTitle = "ڕیکلامەکەت ڕەتکرایەوە ❌";
+                else if (request.NewStatus == "approved") notifTitle = "ڕیکلامەکەت قبوڵکرا ✅";
+
+                string notifMessage = $"ڕیکلامی ({order.AdName}) نوێکرایەوە. ڤییووی نوێ: {request.NewViews}";
+
+                var newNotif = new NotificationModel
+                {
+                    UserId = request.UserId,
+                    Title = notifTitle,
+                    Message = notifMessage,
+                    IsRead = false
+                };
+                
+                await _supabase.From<NotificationModel>().Insert(newNotif);
 
                 return Ok(new { message = "داتاکان بە سەرکەوتوویی نوێکرانەوە ✅" });
             }
