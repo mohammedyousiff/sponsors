@@ -23,7 +23,7 @@ namespace SponsorSaaS.Api.Controllers
         public string TargetLocation { get; set; }
     }
 
-    // ٢. مۆدێلی نوێکردنەوەی پڕۆگرێس لەلایەن ئەدمین
+    // ٢. مۆدێلی نوێکردنەوەی پڕۆگرێس لەلایەن ئەدمین (دەستکاریکراوە بۆ وەرگرتنی هۆکاری ڕەتکردنەوە)
     public class UpdateProgressRequest
     {
         public string OrderId { get; set; }
@@ -31,6 +31,7 @@ namespace SponsorSaaS.Api.Controllers
         public decimal DeductionAmount { get; set; }
         public int NewViews { get; set; }
         public string NewStatus { get; set; }
+        public string RejectReason { get; set; } // زیادکرا بۆ هۆکاری ڕەتکردنەوە
     }
 
     // ٣. مۆدێلی پڕۆفایل
@@ -60,7 +61,7 @@ namespace SponsorSaaS.Api.Controllers
         [Column("tiktok_post_code")] public string PostCode { get; set; }
     }
 
-    // ٥. مۆدێلی ئاگادارکردنەوەکان (نوێ)
+    // ٥. مۆدێلی ئاگادارکردنەوەکان
     [Table("notifications")]
     public class NotificationModel : BaseModel
     {
@@ -111,6 +112,17 @@ namespace SponsorSaaS.Api.Controllers
                 };
                 
                 await _supabase.From<OrderModel>().Insert(newOrder);
+
+                // ئاگادارکردنەوە بۆ کاتی ناردنی داواکاری
+                var newNotif = new NotificationModel
+                {
+                    UserId = request.UserId,
+                    Title = "داواکارییەکەت گەیشت ⏳",
+                    Message = $"داواکاری سپۆنسەر بۆ ڕیکلامی ({request.AdName}) بە سەرکەوتوویی نێردرا، تکایە چاوەڕێی قبوڵکردن بە.",
+                    IsRead = false
+                };
+                await _supabase.From<NotificationModel>().Insert(newNotif);
+
                 return Ok(new { message = "داواکارییەکە تۆمارکرا ✅" });
             }
             catch (Exception ex) { return StatusCode(500, new { message = ex.Message }); }
@@ -139,23 +151,48 @@ namespace SponsorSaaS.Api.Controllers
                 order.Status = request.NewStatus;
                 await _supabase.From<OrderModel>().Update(order);
 
-                // دروستکردنی ئاگادارکردنەوە بۆ بەکارهێنەر (نوێ)
-                string notifTitle = "ڕیکلامەکەت نوێکرایەوە 🚀";
-                if (request.NewStatus == "done") notifTitle = "سپۆنسەرەکەت تەواو بوو ✅";
-                else if (request.NewStatus == "rejected") notifTitle = "ڕیکلامەکەت ڕەتکرایەوە ❌";
-                else if (request.NewStatus == "approved") notifTitle = "ڕیکلامەکەت قبوڵکرا ✅";
+                // دروستکردنی ئاگادارکردنەوەی زیرەک و پڕ لە وردەکاری
+                string notifTitle = "";
+                string notifMessage = "";
 
-                string notifMessage = $"ڕیکلامی ({order.AdName}) نوێکرایەوە. ڤییووی نوێ: {request.NewViews}";
-
-                var newNotif = new NotificationModel
+                if (request.NewStatus == "done")
                 {
-                    UserId = request.UserId,
-                    Title = notifTitle,
-                    Message = notifMessage,
-                    IsRead = false
-                };
-                
-                await _supabase.From<NotificationModel>().Insert(newNotif);
+                    notifTitle = "سپۆنسەرەکەت تەواو بوو 🎉";
+                    notifMessage = $"کامپەینی ({order.AdName}) بە سەرکەوتوویی کۆتایی هات! لەم نوێکردنەوەیەدا بڕی ${request.DeductionAmount} خەرجکرا و {request.NewViews:N0} ڤییووی نوێ هات. کۆی گشتی پارەی خەرجکراو گەیشتە ${order.SpentAmount} و کامپەینەکە وەستا.";
+                }
+                else if (request.NewStatus == "rejected")
+                {
+                    notifTitle = "ڕیکلامەکەت ڕەتکرایەوە ❌";
+                    string reason = !string.IsNullOrEmpty(request.RejectReason) ? request.RejectReason : "هۆکار دیارینەکراوە";
+                    notifMessage = $"بەداخەوە ڕیکلامی ({order.AdName}) ڕەتکرایەوە. هۆکار: {reason}. هیچ بڕە پارەیەک لە باڵانسەکەت نەبڕاوە بۆ ئەمە.";
+                }
+                else if (request.NewStatus == "approved")
+                {
+                    if (request.DeductionAmount > 0 || request.NewViews > 0)
+                    {
+                        // ئەمە بۆ کاتێکە کە ئەدمین دەستکاری بەرەوپێشچوون دەکات (Progress Update)
+                        notifTitle = "ڕاپۆرتی نوێی ڕیکلام 📈";
+                        notifMessage = $"بەرەوپێشچوونی نوێ لە ڕیکلامی ({order.AdName}): بڕی ${request.DeductionAmount} خەرجکرا و {request.NewViews:N0} ڤییووی نوێ تۆمارکرا. (کۆی خەرجی تا ئێستا: ${order.SpentAmount} لە کۆی ${order.TotalPrice}).";
+                    }
+                    else
+                    {
+                        // ئەمە بۆ کاتێکە کە تازە قبوڵ دەکرێت و هێشتا پارەی لێ نەبڕاوە
+                        notifTitle = "ڕیکلامەکەت قبوڵکرا ✅";
+                        notifMessage = $"پیرۆزە! ڕیکلامی ({order.AdName}) پەسەندکرا و دەستمان کرد بە کارکردن لەسەری. لەمەودوا ڕاپۆرتی خەرجی و ڤییووەکانت پێ دەگات.";
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(notifTitle))
+                {
+                    var newNotif = new NotificationModel
+                    {
+                        UserId = request.UserId,
+                        Title = notifTitle,
+                        Message = notifMessage,
+                        IsRead = false
+                    };
+                    await _supabase.From<NotificationModel>().Insert(newNotif);
+                }
 
                 return Ok(new { message = "داتاکان بە سەرکەوتوویی نوێکرانەوە ✅" });
             }
