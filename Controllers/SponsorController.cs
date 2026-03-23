@@ -21,9 +21,13 @@ namespace SponsorSaaS.Api.Controllers
         public string TargetAge { get; set; }
         public string TargetGender { get; set; }
         public string TargetLocation { get; set; }
+        
+        // ئەم دووانە زیادکراون بۆ کێشەی نەهاتنی بەروار و کات
+        public string StartDate { get; set; } 
+        public string StartTime { get; set; } 
     }
 
-    // ٢. مۆدێلی نوێکردنەوەی پڕۆگرێس لەلایەن ئەدمین (دەستکاریکراوە بۆ وەرگرتنی هۆکاری ڕەتکردنەوە)
+    // ٢. مۆدێلی نوێکردنەوەی پڕۆگرێس لەلایەن ئەدمین
     public class UpdateProgressRequest
     {
         public string OrderId { get; set; }
@@ -31,7 +35,7 @@ namespace SponsorSaaS.Api.Controllers
         public decimal DeductionAmount { get; set; }
         public int NewViews { get; set; }
         public string NewStatus { get; set; }
-        public string RejectReason { get; set; } // زیادکرا بۆ هۆکاری ڕەتکردنەوە
+        public string RejectReason { get; set; } // بۆ هۆکاری ڕەتکردنەوە
     }
 
     // ٣. مۆدێلی پڕۆفایل
@@ -42,7 +46,7 @@ namespace SponsorSaaS.Api.Controllers
         [Column("balance")] public decimal Balance { get; set; }
     }
 
-    // ٤. مۆدێلی ئۆردەر
+    // ٤. مۆدێلی ئۆردەر (کۆڵۆمە تازەکان زیاد کراون)
     [Table("orders")]
     public class OrderModel : BaseModel
     {
@@ -59,6 +63,11 @@ namespace SponsorSaaS.Api.Controllers
         [Column("duration_days")] public int DurationDays { get; set; }
         [Column("tiktok_video_url")] public string TiktokUrl { get; set; }
         [Column("tiktok_post_code")] public string PostCode { get; set; }
+        
+        // ئەم سیانە زیاد کران
+        [Column("target_location")] public string TargetLocation { get; set; }
+        [Column("start_date")] public string StartDate { get; set; }
+        [Column("start_time")] public string StartTime { get; set; }
     }
 
     // ٥. مۆدێلی ئاگادارکردنەوەکان
@@ -108,7 +117,12 @@ namespace SponsorSaaS.Api.Controllers
                     TotalPrice = totalPrice,
                     TiktokUrl = request.TiktokUrl,
                     PostCode = request.PostCode,
-                    Status = "pending"
+                    Status = "pending",
+                    
+                    // لێرەدا داتاکان سەیڤ دەبن
+                    TargetLocation = request.TargetLocation,
+                    StartDate = request.StartDate,
+                    StartTime = request.StartTime
                 };
                 
                 await _supabase.From<OrderModel>().Insert(newOrder);
@@ -133,21 +147,26 @@ namespace SponsorSaaS.Api.Controllers
         {
             try
             {
-                // بڕینی پارە
-                var profResp = await _supabase.From<ProfileModel>().Where(x => x.Id == request.UserId).Get();
-                var profile = profResp.Models.FirstOrDefault();
-                if (profile == null) return BadRequest(new { message = "پڕۆفایل نەدۆزرایەوە." });
-
-                profile.Balance -= request.DeductionAmount;
-                await _supabase.From<ProfileModel>().Update(profile);
-
-                // نوێکردنەوەی ئۆردەر
                 var orderResp = await _supabase.From<OrderModel>().Where(x => x.Id == request.OrderId).Get();
                 var order = orderResp.Models.FirstOrDefault();
                 if (order == null) return BadRequest(new { message = "ئۆردەر نەدۆزرایەوە." });
 
-                order.SpentAmount += request.DeductionAmount;
-                order.Views += request.NewViews;
+                // تەنها ئەو کاتە پارە دەبڕین کە ڕەت نەکرابێتەوە
+                if (request.NewStatus != "rejected" && request.DeductionAmount > 0)
+                {
+                    var profResp = await _supabase.From<ProfileModel>().Where(x => x.Id == request.UserId).Get();
+                    var profile = profResp.Models.FirstOrDefault();
+                    if (profile == null) return BadRequest(new { message = "پڕۆفایل نەدۆزرایەوە." });
+
+                    profile.Balance -= request.DeductionAmount;
+                    await _supabase.From<ProfileModel>().Update(profile);
+
+                    // زیادکردنی پارەی خەرجکراو و ڤییوو
+                    order.SpentAmount += request.DeductionAmount;
+                    order.Views += request.NewViews;
+                }
+
+                // نوێکردنەوەی حاڵەتی ئۆردەرەکە
                 order.Status = request.NewStatus;
                 await _supabase.From<OrderModel>().Update(order);
 
@@ -170,13 +189,11 @@ namespace SponsorSaaS.Api.Controllers
                 {
                     if (request.DeductionAmount > 0 || request.NewViews > 0)
                     {
-                        // ئەمە بۆ کاتێکە کە ئەدمین دەستکاری بەرەوپێشچوون دەکات (Progress Update)
                         notifTitle = "ڕاپۆرتی نوێی ڕیکلام 📈";
                         notifMessage = $"بەرەوپێشچوونی نوێ لە ڕیکلامی ({order.AdName}): بڕی ${request.DeductionAmount} خەرجکرا و {request.NewViews:N0} ڤییووی نوێ تۆمارکرا. (کۆی خەرجی تا ئێستا: ${order.SpentAmount} لە کۆی ${order.TotalPrice}).";
                     }
                     else
                     {
-                        // ئەمە بۆ کاتێکە کە تازە قبوڵ دەکرێت و هێشتا پارەی لێ نەبڕاوە
                         notifTitle = "ڕیکلامەکەت قبوڵکرا ✅";
                         notifMessage = $"پیرۆزە! ڕیکلامی ({order.AdName}) پەسەندکرا و دەستمان کرد بە کارکردن لەسەری. لەمەودوا ڕاپۆرتی خەرجی و ڤییووەکانت پێ دەگات.";
                     }
