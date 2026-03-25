@@ -2,14 +2,18 @@ using Microsoft.AspNetCore.Mvc;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
-using System.Text.RegularExpressions; // بۆ جیاکردنەوەی ئایدی ڤیدیۆکە پێویستە
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Net.Http.Json;
+using System.Text.RegularExpressions;
 using Supabase;
 using Postgrest.Attributes;
 using Postgrest.Models;
 
 namespace SponsorSaaS.Api.Controllers
 {
-    // ١. مۆدێلی وەرگرتنی سپۆنسەری نوێ
+    // --- مۆدێلەکان (Models) ---
+
     public class SponsorRequest
     {
         public string UserId { get; set; }
@@ -26,7 +30,6 @@ namespace SponsorSaaS.Api.Controllers
         public string StartTime { get; set; } 
     }
 
-    // ٢. مۆدێلی نوێکردنەوەی پڕۆگرێس لەلایەن ئەدمین
     public class UpdateProgressRequest
     {
         public string OrderId { get; set; }
@@ -37,7 +40,6 @@ namespace SponsorSaaS.Api.Controllers
         public string RejectReason { get; set; }
     }
 
-    // ٣. مۆدێلی پڕۆفایل
     [Table("profiles")]
     public class ProfileModel : BaseModel
     {
@@ -45,7 +47,6 @@ namespace SponsorSaaS.Api.Controllers
         [Column("balance")] public decimal Balance { get; set; }
     }
 
-    // ٤. مۆدێلی ئۆردەر
     [Table("orders")]
     public class OrderModel : BaseModel
     {
@@ -65,10 +66,9 @@ namespace SponsorSaaS.Api.Controllers
         [Column("target_location")] public string TargetLocation { get; set; }
         [Column("start_date")] public string StartDate { get; set; }
         [Column("start_time")] public string StartTime { get; set; }
-        [Column("video_id")] public string VideoId { get; set; } // ئایدی تیکتۆک لێرە سەیڤ دەبێت
+        [Column("video_id")] public string VideoId { get; set; }
     }
 
-    // ٥. مۆدێلی ئاگادارکردنەوەکان
     [Table("notifications")]
     public class NotificationModel : BaseModel
     {
@@ -78,18 +78,30 @@ namespace SponsorSaaS.Api.Controllers
         [Column("is_read")] public bool IsRead { get; set; }
     }
 
+    [Table("admin_settings")]
+    public class AdminSettingsModel : BaseModel
+    {
+        [PrimaryKey("id", false)] public int Id { get; set; }
+        [Column("access_token")] public string AccessToken { get; set; }
+        [Column("refresh_token")] public string RefreshToken { get; set; }
+        [Column("updated_at")] public DateTime UpdatedAt { get; set; }
+    }
+
+    // --- کۆنتڕۆڵەر (Controller) ---
+
     [ApiController]
     [Route("api/[controller]")]
     public class SponsorController : ControllerBase
     {
         private readonly Supabase.Client _supabase;
+        private readonly IHttpClientFactory _httpClientFactory;
 
-        public SponsorController(Supabase.Client supabase)
+        public SponsorController(Supabase.Client supabase, IHttpClientFactory httpClientFactory)
         {
             _supabase = supabase;
+            _httpClientFactory = httpClientFactory;
         }
 
-        // *** فەنکشنی یاریدەدەر بۆ جیاکردنەوەی ئایدی ڤیدیۆ لە لینکەکە ***
         private string ExtractVideoId(string url)
         {
             if (string.IsNullOrEmpty(url)) return null;
@@ -97,28 +109,56 @@ namespace SponsorSaaS.Api.Controllers
             return match.Success ? match.Groups[1].Value : null;
         }
 
-        [HttpGet("ping")]
-        public IActionResult Ping() => Ok("سێرڤەرەکە بە تەندروستی کار دەکات.");
+        // ١. فەنکشنی نوێکردنەوەی ئۆتۆماتیکی کلیل (Refresh Token Logic)
+        private async Task<string> GetValidAccessToken()
+        {
+            var response = await _supabase.From<AdminSettingsModel>().Where(x => x.Id == 1).Get();
+            var settings = response.Models.FirstOrDefault();
+
+            if (settings == null) return null;
+
+            // ئەگەر کلیلەکە زیاتر لە ٢٠ سەعاتی بەسەردا ڕۆشتبوو، نوێی دەکەینەوە
+            if ((DateTime.UtcNow - settings.UpdatedAt).TotalHours > 20)
+            {
+                var client = _httpClientFactory.CreateClient();
+                var refreshData = new FormUrlEncodedContent(new[]
+                {
+                    new KeyValuePair<string, string>("client_key", "aw30bjij28hamzh6"),
+                    new KeyValuePair<string, string>("client_secret", "pGC0XSpiHT5xakcRZo1TlqYnECFjGm07"),
+                    new KeyValuePair<string, string>("grant_type", "refresh_token"),
+                    new KeyValuePair<string, string>("refresh_token", settings.RefreshToken)
+                });
+
+                var tiktokResponse = await client.PostAsync("https://open.tiktokapis.com/v2/auth/token/refresh/", refreshData);
+                if (tiktokResponse.IsSuccessStatusCode)
+                {
+                    var json = await tiktokResponse.Content.ReadFromJsonAsync<dynamic>();
+                    settings.AccessToken = (string)json.access_token;
+                    settings.RefreshToken = (string)json.refresh_token;
+                    settings.UpdatedAt = DateTime.UtcNow;
+                    
+                    await _supabase.From<AdminSettingsModel>().Update(settings);
+                }
+            }
+            return settings.AccessToken;
+        }
 
         [HttpGet("test")]
-        public IActionResult TestApi() => Ok(new { message = "باکئێند ئامادەیە!" });
+        public IActionResult Test() => Ok(new { message = "باکئێند و سیستەمی سپۆنسەر ئامادەیە!" });
 
         [HttpPost("submit")]
         public async Task<IActionResult> SubmitSponsor([FromBody] SponsorRequest request)
         {
             try
             {
-                // ١. جیاکردنەوەی ئایدی ڤیدیۆکە پێش هەموو شتێک
                 var videoId = ExtractVideoId(request.TiktokUrl);
-                if (string.IsNullOrEmpty(videoId)) 
-                    return BadRequest(new { message = "تکایە لینکێکی ڕاستی تیکتۆک بنێرە (دەبێت ئایدی ڤیدیۆکەی تێدابێت)." });
+                if (string.IsNullOrEmpty(videoId)) return BadRequest(new { message = "لینکی تیکتۆک ناتەواوە." });
 
                 decimal totalPrice = request.DailyBudget * request.DurationDays;
-                var response = await _supabase.From<ProfileModel>().Where(x => x.Id == request.UserId).Get();
-                var profile = response.Models.FirstOrDefault();
+                var profResp = await _supabase.From<ProfileModel>().Where(x => x.Id == request.UserId).Get();
+                var profile = profResp.Models.FirstOrDefault();
 
-                if (profile == null) return BadRequest(new { message = "بەکارهێنەر نەدۆزرایەوە." });
-                if (profile.Balance < totalPrice) return BadRequest(new { message = "باڵانست پێویست نییە!" });
+                if (profile == null || profile.Balance < totalPrice) return BadRequest(new { message = "باڵانست بەش ناکات." });
 
                 var newOrder = new OrderModel
                 {
@@ -130,26 +170,49 @@ namespace SponsorSaaS.Api.Controllers
                     DurationDays = request.DurationDays,
                     TotalPrice = totalPrice,
                     TiktokUrl = request.TiktokUrl,
-                    VideoId = videoId, // ئایدییە جیاکراوەکە لێرە دادەنرێت
+                    VideoId = videoId,
                     PostCode = request.PostCode,
                     Status = "pending",
                     TargetLocation = request.TargetLocation,
                     StartDate = request.StartDate,
                     StartTime = request.StartTime
                 };
-                
                 await _supabase.From<OrderModel>().Insert(newOrder);
+                return Ok(new { message = "نێردرا بۆ ئەدمین ✅" });
+            }
+            catch (Exception ex) { return StatusCode(500, new { message = ex.Message }); }
+        }
 
-                var newNotif = new NotificationModel
+        // ٢. فەنکشنی نوێکردنەوەی ڤییووەکان (Sync Views)
+        [HttpGet("sync-views/{orderId}")]
+        public async Task<IActionResult> SyncViews(string orderId)
+        {
+            try
+            {
+                var orderResp = await _supabase.From<OrderModel>().Where(x => x.Id == orderId).Get();
+                var order = orderResp.Models.FirstOrDefault();
+                if (order == null || string.IsNullOrEmpty(order.VideoId)) return BadRequest("ئۆردەرەکە کێشەی هەیە.");
+
+                string token = await GetValidAccessToken();
+                if (string.IsNullOrEmpty(token)) return StatusCode(500, "کێشە لە کلیلی ئەدمین هەیە.");
+
+                var client = _httpClientFactory.CreateClient();
+                client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+
+                var body = new { filters = new { video_ids = new[] { order.VideoId } } };
+                var response = await client.PostAsJsonAsync("https://open.tiktokapis.com/v2/video/query/?fields=view_count", body);
+                
+                if (response.IsSuccessStatusCode)
                 {
-                    UserId = request.UserId,
-                    Title = "داواکارییەکەت گەیشت ⏳",
-                    Message = $"داواکاری سپۆنسەر بۆ ڕیکلامی ({request.AdName}) بە سەرکەوتوویی نێردرا، تکایە چاوەڕێی قبوڵکردن بە.",
-                    IsRead = false
-                };
-                await _supabase.From<NotificationModel>().Insert(newNotif);
+                    var data = await response.Content.ReadFromJsonAsync<dynamic>();
+                    // جیاکردنەوەی ژمارەی ڤییووەکان لە لیستی ڤیدیۆکانی تیکتۆک
+                    int currentViews = data?.data?.videos?[0]?.view_count ?? 0;
 
-                return Ok(new { message = "داواکارییەکە تۆمارکرا ✅", video_id = videoId });
+                    order.Views = currentViews;
+                    await _supabase.From<OrderModel>().Update(order);
+                    return Ok(new { views = currentViews });
+                }
+                return BadRequest("تیکتۆک وەڵامی نەدایەوە.");
             }
             catch (Exception ex) { return StatusCode(500, new { message = ex.Message }); }
         }
@@ -167,47 +230,17 @@ namespace SponsorSaaS.Api.Controllers
                 {
                     var profResp = await _supabase.From<ProfileModel>().Where(x => x.Id == request.UserId).Get();
                     var profile = profResp.Models.FirstOrDefault();
-                    if (profile == null) return BadRequest(new { message = "پڕۆفایل نەدۆزرایەوە." });
-
-                    profile.Balance -= request.DeductionAmount;
-                    await _supabase.From<ProfileModel>().Update(profile);
-
+                    if (profile != null)
+                    {
+                        profile.Balance -= request.DeductionAmount;
+                        await _supabase.From<ProfileModel>().Update(profile);
+                    }
                     order.SpentAmount += request.DeductionAmount;
-                    order.Views += request.NewViews;
                 }
 
                 order.Status = request.NewStatus;
                 await _supabase.From<OrderModel>().Update(order);
-
-                string notifTitle = "";
-                string notifMessage = "";
-
-                if (request.NewStatus == "done")
-                {
-                    notifTitle = "سپۆنسەرەکەت تەواو بوو 🎉";
-                    notifMessage = $"کامپەینی ({order.AdName}) بە سەرکەوتوویی کۆتایی هات! بڕی ${request.DeductionAmount} خەرجکرا و کۆی ڤییوو گەیشتە {order.Views:N0}.";
-                }
-                else if (request.NewStatus == "rejected")
-                {
-                    notifTitle = "ڕیکلامەکەت ڕەتکرایەوە ❌";
-                    string reason = !string.IsNullOrEmpty(request.RejectReason) ? request.RejectReason : "هۆکار دیارینەکراوە";
-                    notifMessage = $"بەداخەوە ڕیکلامی ({order.AdName}) ڕەتکرایەوە. هۆکار: {reason}.";
-                }
-                else if (request.NewStatus == "approved")
-                {
-                    notifTitle = (request.DeductionAmount > 0) ? "ڕاپۆرتی نوێی ڕیکلام 📈" : "ڕیکلامەکەت قبوڵکرا ✅";
-                    notifMessage = (request.DeductionAmount > 0) 
-                        ? $"بەرەوپێشچوونی نوێ لە ({order.AdName}): ${request.DeductionAmount} خەرجکرا." 
-                        : $"پیرۆزە! ڕیکلامی ({order.AdName}) پەسەندکرا.";
-                }
-
-                if (!string.IsNullOrEmpty(notifTitle))
-                {
-                    var newNotif = new NotificationModel { UserId = request.UserId, Title = notifTitle, Message = notifMessage, IsRead = false };
-                    await _supabase.From<NotificationModel>().Insert(newNotif);
-                }
-
-                return Ok(new { message = "داتاکان نوێکرانەوە ✅" });
+                return Ok(new { message = "پڕۆسەکە نوێکرایەوە ✅" });
             }
             catch (Exception ex) { return StatusCode(500, new { message = ex.Message }); }
         }
