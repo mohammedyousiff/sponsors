@@ -20,6 +20,9 @@ namespace SponsorSaaS.Api
         {
             services.AddControllers();
 
+            // *** زیادکراوە بۆ ئەوەی بتوانیت پەیوەندی بە APIی تیکتۆکەوە بکەیت ***
+            services.AddHttpClient();
+
             // هێنانی زانیارییەکانی سوبابەیس
             var url = Configuration["Supabase:Url"];
             var key = Configuration["Supabase:Key"];
@@ -29,9 +32,12 @@ namespace SponsorSaaS.Api
             services.AddSingleton(provider => new Supabase.Client(url, key, options));
 
             // کردنەوەی CORS بۆ ئەوەی جاڤاسکریپتەکەمان بتوانێت قسەی لەگەڵ بکات
-         services.AddCors(options => {
-    options.AddPolicy("AllowAll", builder => builder.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
-});
+            services.AddCors(options => {
+                options.AddPolicy("AllowAll", builder => 
+                    builder.AllowAnyOrigin()
+                           .AllowAnyMethod()
+                           .AllowAnyHeader());
+            });
         }
 
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
