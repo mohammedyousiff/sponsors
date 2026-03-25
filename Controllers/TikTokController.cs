@@ -22,8 +22,8 @@ namespace SponsorSaaS.Api.Controllers
         {
             if (string.IsNullOrEmpty(code)) return BadRequest("کۆدی تیکتۆک نەگەڕایەوە");
 
-            var clientKey = "aw30bjij28hamzh6"; 
-            var clientSecret = "pGC0XSpiHT5xakcRZo1TlqYnECFjGm07"; 
+            var clientKey = "sbaw47z3l8hgj4lnkk"; 
+            var clientSecret = "rtCxjzlmO6XufNGfnPqYUzizC4uYV9jd"; 
             var redirectUri = "https://sponsors-76gg.onrender.com/api/tiktok/callback"; 
 
             using var httpClient = new HttpClient();
