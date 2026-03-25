@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.RegularExpressions;
+using System.Text.Json; // بۆ چارەسەرکردنی کێشەی JsonElement زیادکراوە
 using Supabase;
 using Postgrest.Attributes;
 using Postgrest.Models;
@@ -132,9 +133,9 @@ namespace SponsorSaaS.Api.Controllers
                 var tiktokResponse = await client.PostAsync("https://open.tiktokapis.com/v2/auth/token/refresh/", refreshData);
                 if (tiktokResponse.IsSuccessStatusCode)
                 {
-                    var json = await tiktokResponse.Content.ReadFromJsonAsync<dynamic>();
-                    settings.AccessToken = (string)json.access_token;
-                    settings.RefreshToken = (string)json.refresh_token;
+                    var json = await tiktokResponse.Content.ReadFromJsonAsync<JsonElement>();
+                    settings.AccessToken = json.GetProperty("access_token").GetString();
+                    settings.RefreshToken = json.GetProperty("refresh_token").GetString();
                     settings.UpdatedAt = DateTime.UtcNow;
                     
                     await _supabase.From<AdminSettingsModel>().Update(settings);
@@ -204,13 +205,19 @@ namespace SponsorSaaS.Api.Controllers
                 
                 if (response.IsSuccessStatusCode)
                 {
-                    var data = await response.Content.ReadFromJsonAsync<dynamic>();
-                    // جیاکردنەوەی ژمارەی ڤییووەکان لە لیستی ڤیدیۆکانی تیکتۆک
-                    int currentViews = data?.data?.videos?[0]?.view_count ?? 0;
-
-                    order.Views = currentViews;
-                    await _supabase.From<OrderModel>().Update(order);
-                    return Ok(new { views = currentViews });
+                    var root = await response.Content.ReadFromJsonAsync<JsonElement>();
+                    
+                    // لێرەدا بە وردی دەچینە ناو داتاکانی تیکتۆک بۆ دۆزینەوەی ڤییووەکان بەبێ بەکارهێنانی dynamic
+                    if (root.TryGetProperty("data", out var data) && 
+                        data.TryGetProperty("videos", out var videos) && 
+                        videos.GetArrayLength() > 0)
+                    {
+                        int currentViews = videos[0].GetProperty("view_count").GetInt32();
+                        order.Views = currentViews;
+                        await _supabase.From<OrderModel>().Update(order);
+                        return Ok(new { views = currentViews, message = "پیرۆزە! ڤییووەکان نوێکرانەوە." });
+                    }
+                    return BadRequest("ڤیدیۆکە لە تیکتۆک نەدۆزرایەوە.");
                 }
                 return BadRequest("تیکتۆک وەڵامی نەدایەوە.");
             }
@@ -222,7 +229,8 @@ namespace SponsorSaaS.Api.Controllers
         {
             try
             {
-                var orderResp = await _supabase.From<OrderModel>().Where(x => x.Id == request.OrderId).Get();
+                var orderIdLong = long.Parse(request.OrderId); // گۆڕین بۆ ژمارە چونکە Id لە داتابەیس ژمارەیە
+                var orderResp = await _supabase.From<OrderModel>().Where(x => x.Id == orderIdLong).Get();
                 var order = orderResp.Models.FirstOrDefault();
                 if (order == null) return BadRequest(new { message = "ئۆردەر نەدۆزرایەوە." });
 
@@ -236,6 +244,7 @@ namespace SponsorSaaS.Api.Controllers
                         await _supabase.From<ProfileModel>().Update(profile);
                     }
                     order.SpentAmount += request.DeductionAmount;
+                    order.Views += request.NewViews;
                 }
 
                 order.Status = request.NewStatus;
