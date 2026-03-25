@@ -20,7 +20,7 @@ namespace SponsorSaaS.Api
         {
             services.AddControllers();
 
-            // *** زیادکراوە بۆ ئەوەی بتوانیت پەیوەندی بە APIی تیکتۆکەوە بکەیت ***
+            // ڕێگەدان بە بەکارهێنانی HttpClient بۆ تیکتۆک
             services.AddHttpClient();
 
             // هێنانی زانیارییەکانی سوبابەیس
@@ -46,6 +46,9 @@ namespace SponsorSaaS.Api
             {
                 app.UseDeveloperExceptionPage();
             }
+
+            // *** ئەمە زیادکرا بۆ ئەوەی لاپەڕەکانی Privacy و Terms کار بکەن ***
+            app.UseStaticFiles();
 
             app.UseRouting();
             app.UseCors("AllowAll");
