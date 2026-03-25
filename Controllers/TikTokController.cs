@@ -39,7 +39,7 @@ namespace SponsorSaaS.Api.Controllers
             var response = await httpClient.PostAsync("https://open.tiktokapis.com/v2/oauth/token/", data);
             var result = await response.Content.ReadAsStringAsync();
 
-            var htmlResponse = "<h2 style='color:green; text-align:center;'>پیرۆزە حەمە گیان!</h2>" +
+            var htmlResponse = "<h2 style='color:green; text-align:center;'>تۆکنەکەت بە سەرکەوتووی وەرگیرا!</h2>" +
                                "<p style='text-align:center;'>تکایە ئەم کۆدەی خوارەوە هەمووی کۆپی بکە و بۆمی بنێرە:</p>" +
                                $"<textarea style='width:100%; height:300px; direction:ltr;'>{result}</textarea>";
 
