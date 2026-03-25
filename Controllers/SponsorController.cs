@@ -68,6 +68,7 @@ namespace SponsorSaaS.Api.Controllers
         [Column("target_location")] public string TargetLocation { get; set; }
         [Column("start_date")] public string StartDate { get; set; }
         [Column("start_time")] public string StartTime { get; set; }
+        [Column("video_id")] public string VideoId { get; set; }
     }
 
     // ٥. مۆدێلی ئاگادارکردنەوەکان
