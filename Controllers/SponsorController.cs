@@ -91,6 +91,13 @@ namespace SponsorSaaS.Api.Controllers
             _supabase = supabase;
         }
 
+        // *** فەنکشنی زیادکراو بۆ تاقیکردنەوەی سێرڤەر ***
+        [HttpGet("ping")]
+        public IActionResult Ping()
+        {
+            return Ok("سێرڤەرەکە بە تەندروستی کار دەکات.");
+        }
+
         [HttpGet("test")]
         public IActionResult TestApi() => Ok(new { message = "باکئێند ئامادەیە!" });
 
