@@ -185,7 +185,7 @@ namespace SponsorSaaS.Api.Controllers
 
         // ٢. فەنکشنی نوێکردنەوەی ڤییووەکان (Sync Views)
         [HttpGet("sync-views/{orderId}")]
-        public async Task<IActionResult> SyncViews(string orderId)
+        public async Task<IActionResult> SyncViews(long orderId)
         {
             try
             {
