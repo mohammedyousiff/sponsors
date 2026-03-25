@@ -9,6 +9,14 @@ namespace SponsorSaaS.Api.Controllers
     [ApiController]
     public class TikTokController : ControllerBase
     {
+        // ١. ئەمە ئەو بەشە نوێیەیە کە تیکتۆک هەڵدەخەڵەتێنێت و دۆمەینەکە ڤێریفای دەکات
+        [HttpGet("/tiktokTAdOS0ZizW6VCDaZ2nIZeTO92oODuPll.txt")]
+        public IActionResult VerifyDomain()
+        {
+            return Content("tiktok-developers-site-verification=TAdOS0ZizW6VCDaZ2nIZeTO92oODuPll", "text/plain");
+        }
+
+        // ٢. ئەمەش فەنکشنەکەی پێشووە بۆ گرتنی تۆکەنەکە
         [HttpGet("callback")]
         public async Task<IActionResult> Callback(string code)
         {
