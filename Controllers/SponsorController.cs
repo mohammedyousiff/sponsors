@@ -50,7 +50,7 @@ namespace SponsorSaaS.Api.Controllers
     [Table("orders")]
     public class OrderModel : BaseModel
     {
-        [PrimaryKey("id", false)] public string Id { get; set; }
+        [PrimaryKey("id", false)] public long Id { get; set; }
         [Column("user_id")] public string UserId { get; set; }
         [Column("ad_name")] public string AdName { get; set; }
         [Column("spent_amount")] public decimal SpentAmount { get; set; }
