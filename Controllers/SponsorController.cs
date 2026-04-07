@@ -138,10 +138,13 @@ namespace SponsorSaaS.Api.Controllers
                 if (tiktokResponse.IsSuccessStatusCode)
                 {
                     var json = await tiktokResponse.Content.ReadFromJsonAsync<JsonElement>();
-                    settings.AccessToken = json.GetProperty("access_token").GetString();
-                    settings.RefreshToken = json.GetProperty("refresh_token").GetString();
-                    settings.UpdatedAt = DateTime.UtcNow;
-                    await _supabase.From<AdminSettingsModel>().Update(settings);
+                    if (json.TryGetProperty("access_token", out var accToken) && json.TryGetProperty("refresh_token", out var refToken))
+                    {
+                        settings.AccessToken = accToken.GetString();
+                        settings.RefreshToken = refToken.GetString();
+                        settings.UpdatedAt = DateTime.UtcNow;
+                        await _supabase.From<AdminSettingsModel>().Update(settings);
+                    }
                 }
             }
             return settings.AccessToken;
@@ -187,7 +190,7 @@ namespace SponsorSaaS.Api.Controllers
             catch (Exception ex) { return StatusCode(500, new { message = ex.Message }); }
         }
 
-        // --- ئەپدەیت کرا بۆ هێنانی داتای ڕیکلام (Paid Stats) ---
+        // --- ئەپدەیت کرا بۆ هێنانی داتای ڕیکلام و گرتنی ئیرۆری تیکتۆک ---
         [HttpGet("sync-views/{orderId}")]
         public async Task<IActionResult> SyncViews(long orderId)
         {
@@ -197,37 +200,60 @@ namespace SponsorSaaS.Api.Controllers
                 var order = orderResp.Models.FirstOrDefault();
                 
                 if (order == null || string.IsNullOrEmpty(order.TiktokAdId)) 
-                    return BadRequest("ئایدی ڕیکلام (Ad ID) دیاری نەکراوە. ئەدمین دەبێت ئایدی ڕیکلامەکە لێرە دابنێت.");
+                    return BadRequest(new { message = "ئایدی ڕیکلام (Ad ID) دیاری نەکراوە. ئەدمین دەبێت ئایدی ڕیکلامەکە لێرە دابنێت." });
 
                 var adminResp = await _supabase.From<AdminSettingsModel>().Where(x => x.Id == 1).Get();
                 var admin = adminResp.Models.FirstOrDefault();
-                if (admin == null || string.IsNullOrEmpty(admin.AdvertiserId)) return BadRequest("Advertiser ID نییە.");
+                if (admin == null || string.IsNullOrEmpty(admin.AdvertiserId)) 
+                    return BadRequest(new { message = "Advertiser ID نییە." });
 
                 string token = await GetValidAccessToken();
                 var client = _httpClientFactory.CreateClient();
                 
-                // Marketing API پێویستی بە Access-Tokenـە لە ناو Header
                 client.DefaultRequestHeaders.Add("Access-Token", token);
 
-                // دروستکردنی لینکی ڕاپۆرت بۆ بڕی خەرجی (spend) و ڤییووی سپۆنسەر (video_play_ad)
                 string metrics = "[\"spend\",\"video_play_ad\"]";
                 string filters = $"[{{\"field_name\":\"ad_id\",\"operator\":\"IN\",\"value\":[\"{order.TiktokAdId}\"]}}]";
                 string url = $"https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/?advertiser_id={admin.AdvertiserId}&report_type=BASIC&data_level=AUCTION_AD&dimensions=[\"ad_id\"]&metrics={metrics}&filters={filters}";
 
                 var response = await client.GetAsync(url);
-                
+                var responseContent = await response.Content.ReadAsStringAsync(); // خوێندنەوەی هەموو وەڵامەکە بۆ دۆزینەوەی ئیرۆر
+
                 if (response.IsSuccessStatusCode)
                 {
-                    var root = await response.Content.ReadFromJsonAsync<JsonElement>();
-                    var list = root.GetProperty("data").GetProperty("list");
+                    using var doc = JsonDocument.Parse(responseContent);
+                    var root = doc.RootElement;
 
-                    if (list.GetArrayLength() > 0)
+                    // ١. پشکنین: ئایا تیکتۆک ئیرۆری ناردووە؟ (ئەگەر code سفر نەبێت واتا کێشە هەیە)
+                    if (root.TryGetProperty("code", out var codeElement) && codeElement.GetInt32() != 0)
                     {
-                        var metricsData = list[0].GetProperty("metrics");
+                        string tiktokMessage = root.TryGetProperty("message", out var msgElement) ? msgElement.GetString() : "کێشەیەکی نەزانراو لە تیکتۆک";
+                        return BadRequest(new { message = $"تیکتۆک دەڵێت: {tiktokMessage} (Code: {codeElement.GetInt32()})" });
+                    }
+
+                    // ٢. پشکنین: بەدوای داتادا دەگەڕێت بە سەلامەتی
+                    if (root.TryGetProperty("data", out var dataElement) && 
+                        dataElement.TryGetProperty("list", out var listElement) && 
+                        listElement.GetArrayLength() > 0)
+                    {
+                        var metricsData = listElement[0].GetProperty("metrics");
                         
-                        // هێنانی داتای سپۆنسەر
-                        decimal spent = decimal.Parse(metricsData.GetProperty("spend").GetString());
-                        int paidViews = int.Parse(metricsData.GetProperty("video_play_ad").GetString());
+                        // هێنانی داتای سپۆنسەر بەبێ کێشەی String یان Number
+                        decimal spent = 0;
+                        if (metricsData.TryGetProperty("spend", out var spendElement))
+                        {
+                            spent = spendElement.ValueKind == JsonValueKind.String 
+                                ? decimal.Parse(spendElement.GetString()) 
+                                : spendElement.GetDecimal();
+                        }
+
+                        int paidViews = 0;
+                        if (metricsData.TryGetProperty("video_play_ad", out var viewsElement))
+                        {
+                            paidViews = viewsElement.ValueKind == JsonValueKind.String 
+                                ? int.Parse(viewsElement.GetString()) 
+                                : viewsElement.GetInt32();
+                        }
 
                         order.SpentAmount = spent;
                         order.Views = paidViews;
@@ -235,11 +261,13 @@ namespace SponsorSaaS.Api.Controllers
 
                         return Ok(new { spent, views = paidViews, message = "داتای سپۆنسەرەکە نوێکرایەوە ✅" });
                     }
-                    return BadRequest("هیچ داتایەک بۆ ئەم ئایدییە نەدۆزرایەوە.");
+                    
+                    return BadRequest(new { message = "هیچ داتایەک نەدۆزرایەوە (لەوانەیە سپۆنسەرەکە هێشتا دەستی پێنەکردبێت یان داتا نوێ نەبووبێتەوە)." });
                 }
-                return BadRequest("تیکتۆک وەڵامی نەدایەوە.");
+                
+                return BadRequest(new { message = $"تیکتۆک وەڵامی نەدایەوە. وردەکاری: {responseContent}" });
             }
-            catch (Exception ex) { return StatusCode(500, new { message = ex.Message }); }
+            catch (Exception ex) { return StatusCode(500, new { message = $"هەڵەی ناوخۆیی: {ex.Message}" }); }
         }
 
         [HttpPost("update-progress")]
